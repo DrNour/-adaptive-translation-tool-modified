@@ -2,30 +2,11 @@ import streamlit as st
 from difflib import SequenceMatcher
 import time
 import random
-
-# Optional packages
-try:
-    import sacrebleu
-    sacrebleu_available = True
-except ModuleNotFoundError:
-    sacrebleu_available = False
-    st.warning("sacrebleu not installed: BLEU/chrF/TER scoring will be disabled.")
-
-try:
-    import Levenshtein
-    levenshtein_available = True
-except ModuleNotFoundError:
-    levenshtein_available = False
-    st.warning("python-Levenshtein not installed: edit distance scoring will be disabled.")
-
-try:
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    pd_available = True
-except ModuleNotFoundError:
-    pd_available = False
-    st.warning("pandas/seaborn/matplotlib not installed: Instructor dashboard charts disabled.")
+import sacrebleu
+import Levenshtein
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # =========================
 # App Setup
@@ -98,19 +79,13 @@ with tab1:
             st.warning(f)
 
         # Scores
-        if sacrebleu_available:
-            bleu_score = sacrebleu.corpus_bleu([student_translation], [[reference_translation]]).score
-            chrf_score = sacrebleu.corpus_chrf([student_translation], [[reference_translation]]).score
-            ter_score = sacrebleu.corpus_ter([student_translation], [[reference_translation]]).score
-            st.write(f"BLEU: {bleu_score:.2f}, chrF: {chrf_score:.2f}, TER: {ter_score:.2f}")
-        else:
-            st.info("BLEU/chrF/TER scores disabled (sacrebleu not installed).")
+        bleu_score = sacrebleu.corpus_bleu([student_translation], [[reference_translation]]).score
+        chrf_score = sacrebleu.corpus_chrf([student_translation], [[reference_translation]]).score
+        ter_score = sacrebleu.corpus_ter([student_translation], [[reference_translation]]).score
+        st.write(f"BLEU: {bleu_score:.2f}, chrF: {chrf_score:.2f}, TER: {ter_score:.2f}")
 
-        if levenshtein_available:
-            edit_dist = Levenshtein.distance(student_translation, reference_translation)
-            st.write(f"Edit Distance: {edit_dist}")
-        else:
-            st.info("Edit Distance disabled (python-Levenshtein not installed).")
+        edit_dist = Levenshtein.distance(student_translation, reference_translation)
+        st.write(f"Edit Distance: {edit_dist}")
 
         elapsed_time = time.time() - start_time
         st.write(f"Time Taken: {elapsed_time:.2f} seconds")
@@ -169,11 +144,8 @@ with tab3:
 # =========================
 with tab4:
     st.subheader("📊 Instructor Dashboard")
-    if pd_available and st.session_state.leaderboard:
-        df = pd.DataFrame([
-            {"Student": user, "Points": points} 
-            for user, points in st.session_state.leaderboard.items()
-        ])
+    if st.session_state.leaderboard:
+        df = pd.DataFrame([{"Student": user, "Points": points} for user, points in st.session_state.leaderboard.items()])
         st.dataframe(df)
         st.bar_chart(df.set_index("Student")["Points"])
         
@@ -189,4 +161,4 @@ with tab4:
             sns.barplot(data=error_df.head(10), x="Count", y="Error")
             st.pyplot(plt)
     else:
-        st.info("Instructor dashboard charts unavailable (pandas/seaborn not installed) or no student activity.")
+        st.info("Instructor dashboard charts unavailable or no student activity.")
