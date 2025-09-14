@@ -2,7 +2,6 @@ import streamlit as st
 from difflib import SequenceMatcher
 import time, random
 from langdetect import detect
-import torch
 
 # Optional packages
 try:
@@ -21,27 +20,11 @@ except ModuleNotFoundError:
     pd_available = False
     st.warning("pandas/seaborn/matplotlib not installed: Dashboard charts disabled.")
 
-# Transformers for semantic and fluency
-try:
-    from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
-    # Cross-lingual NLI
-    nli_model = pipeline("text-classification", model="joeddav/xlm-roberta-large-xnli")
-    # English fluency
-    en_tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    en_model = AutoModelForCausalLM.from_pretrained("gpt2")
-    # Arabic fluency
-    ar_tokenizer = AutoTokenizer.from_pretrained("aubmindlab/ara-gpt2")
-    ar_model = AutoModelForCausalLM.from_pretrained("aubmindlab/ara-gpt2")
-    semantic_fluency_available = True
-except:
-    semantic_fluency_available = False
-    st.warning("Semantic accuracy / fluency scoring unavailable (transformers missing).")
-
 # =========================
 # Streamlit Setup
 # =========================
 st.set_page_config(page_title="Adaptive Translation Tool", layout="wide")
-st.title("🌍 Adaptive Translation & Post-Editing Tool")
+st.title("🌍 Adaptive Translation & Post-Editing Tool (Prize Version)")
 
 # =========================
 # Gamification / Leaderboard
@@ -52,6 +35,8 @@ if "leaderboard" not in st.session_state:
     st.session_state.leaderboard = {}
 if "feedback_history" not in st.session_state:
     st.session_state.feedback_history = []
+if "streak" not in st.session_state:
+    st.session_state.streak = 0
 
 def update_score(username, points):
     st.session_state.score += points
@@ -100,42 +85,8 @@ def highlight_diff(student, reference):
 # =========================
 def edit_distance(a, b):
     matcher = SequenceMatcher(None, a, b)
-    ratio = matcher.ratio()  # Similarity ratio 0-1
+    ratio = matcher.ratio()
     return int((1 - ratio) * max(len(a), len(b)))
-
-# =========================
-# Semantic Accuracy
-# =========================
-def semantic_score(source, translation):
-    if not semantic_fluency_available:
-        return None
-    result = nli_model(f"{source} </s></s> {translation}")[0]
-    if result['label'] == 'ENTAILMENT':
-        score = result['score'] * 100
-    elif result['label'] == 'CONTRADICTION':
-        score = 0
-    else:
-        score = result['score'] * 50
-    return score
-
-# =========================
-# Fluency Scoring
-# =========================
-def fluency_score(text):
-    if not semantic_fluency_available:
-        return None
-    lang = detect_language(text)
-    if lang == "english":
-        tokenizer, model = en_tokenizer, en_model
-    elif lang == "arabic":
-        tokenizer, model = ar_tokenizer, ar_model
-    else:
-        return None
-    inputs = tokenizer(text, return_tensors="pt")
-    with torch.no_grad():
-        loss = model(**inputs, labels=inputs["input_ids"]).loss
-    score = 100 / (1 + loss.item())
-    return score
 
 # =========================
 # Tabs
@@ -153,7 +104,9 @@ with tab1:
     reference_translation = st.text_area("Reference Translation (Human Translation)")
     student_translation = st.text_area("Your Translation", height=150)
 
+    challenge_time_limit = 180  # seconds
     start_time = time.time()
+    
     if st.button("Evaluate Translation"):
         highlighted, fb = highlight_diff(student_translation, reference_translation)
         st.markdown(highlighted, unsafe_allow_html=True)
@@ -172,23 +125,57 @@ with tab1:
         dist = edit_distance(student_translation, reference_translation)
         st.write(f"Edit Distance (approx.): {dist}")
 
-        # Semantic & Fluency
-        if semantic_fluency_available:
-            sem_score = semantic_score(source_text, student_translation)
-            flu_score = fluency_score(student_translation)
-            st.write(f"Semantic Accuracy: {sem_score:.2f}")
-            st.write(f"Fluency: {flu_score:.2f}")
-
         elapsed_time = time.time() - start_time
         st.write(f"Time Taken: {elapsed_time:.2f} seconds")
 
         # Gamification points
         points = 10 + int(random.random()*10)
+        if elapsed_time <= challenge_time_limit:
+            bonus_points = 5
+            st.success(f"Challenge completed in {elapsed_time:.1f}s! Bonus points: {bonus_points}")
+            points += bonus_points
         update_score(username, points)
         st.success(f"Points earned: {points}")
 
+        # Streak
+        if dist < 5:  # successful small edit distance
+            st.session_state.streak += 1
+            streak_points = st.session_state.streak * 2
+            update_score(username, streak_points)
+            st.success(f"🔥 Current streak: {st.session_state.streak} exercises! Bonus points: {streak_points}")
+        else:
+            st.session_state.streak = 0
+
         # Store feedback
-        st.session_state.feedback_history.append((username, [{"semantic": sem_score, "fluency": flu_score}]))
+        st.session_state.feedback_history.append((username, [{"edit_distance": dist}]))
+
+        # =========================
+        # Suggested Exercises
+        # =========================
+        st.subheader("📝 Suggested Exercises Based on Feedback:")
+        for idx, f in enumerate(fb):
+            st.write(f"**Exercise {idx+1}:** {f}")
+            corrected = st.text_input(f"Your attempt for Exercise {idx+1}:", key=f"exercise_{idx}")
+            if st.button(f"Submit Exercise {idx+1}", key=f"submit_{idx}"):
+                if corrected.strip():
+                    st.success("Exercise submitted! Your correction will be evaluated.")
+                    if sacrebleu_available:
+                        new_bleu = sacrebleu.corpus_bleu([corrected], [[reference_translation]]).score
+                        st.write(f"Updated BLEU after exercise: {new_bleu:.2f}")
+                    new_dist = edit_distance(corrected, reference_translation)
+                    st.write(f"Updated Edit Distance: {new_dist}")
+                    # Extra points
+                    extra_points = 5 + int(random.random()*5)
+                    update_score(username, extra_points)
+                    st.success(f"Extra points earned: {extra_points}")
+
+# =========================
+# Tab 2: Challenges (optional daily challenges)
+# =========================
+with tab2:
+    st.subheader("🎯 Daily / Timer Challenges")
+    st.info(f"Complete translation/post-edit tasks within {challenge_time_limit} seconds to earn bonus points!")
+    st.write("You can attempt exercises in Tab 1 and earn streak/bonus points.")
 
 # =========================
 # Tab 3: Leaderboard
@@ -214,20 +201,14 @@ with tab4:
             for fb in fb_list:
                 records.append({
                     "Student": student,
-                    "Semantic Accuracy": fb.get("semantic", 0),
-                    "Fluency": fb.get("fluency", 0)
+                    "Edit Distance": fb.get("edit_distance", 0)
                 })
         df = pd.DataFrame(records)
         avg_student = df.groupby("Student").mean().reset_index()
-        st.write("Average Semantic Accuracy & Fluency per Student:")
+        st.write("Average Edit Distance per Student:")
         st.dataframe(avg_student)
-        class_avg = df[["Semantic Accuracy", "Fluency"]].mean()
-        st.write(f"Class Average Semantic Accuracy: {class_avg['Semantic Accuracy']:.2f}")
-        st.write(f"Class Average Fluency: {class_avg['Fluency']:.2f}")
-        fig, ax = plt.subplots(1, 2, figsize=(12,5))
-        sns.barplot(x="Student", y="Semantic Accuracy", data=avg_student, ax=ax[0])
-        ax[0].set_title("Semantic Accuracy per Student")
-        sns.barplot(x="Student", y="Fluency", data=avg_student, ax=ax[1])
-        ax[1].set_title("Fluency per Student")
+        fig, ax = plt.subplots(figsize=(10,5))
+        sns.barplot(x="Student", y="Edit Distance", data=avg_student, ax=ax)
+        ax.set_title("Average Edit Distance per Student")
         plt.tight_layout()
         st.pyplot(fig)
