@@ -14,30 +14,27 @@ import os
 # --- Paths ---
 LEADERBOARD_FILE = "leaderboard.csv"
 
-# --- Load Models ---
+# --- Load Models (cached for Cloud) ---
 @st.cache_resource
 def load_models():
-    # Cross-lingual NLI (English ↔ Arabic)
-    nli_model = pipeline("text-classification", model="joeddav/xlm-roberta-large-xnli")
-    # Multilingual sentence embeddings for semantic similarity
-    sts_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-    # Keyword extraction
+    nli_model = pipeline("text-classification", model="joeddav/xlm-roberta-base-xnli")
+    sts_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L6-v2')
     kw_model = KeyBERT()
     return nli_model, sts_model, kw_model
 
 nli_model, sts_model, kw_model = load_models()
 
-# --- Initialize session state ---
+# --- Session State ---
 if 'points' not in st.session_state:
     st.session_state.points = 0
 if 'badges' not in st.session_state:
     st.session_state.badges = []
 if 'attempts' not in st.session_state:
     st.session_state.attempts = 0
-if 'timer_active' not in st.session_state:
-    st.session_state.timer_active = False
+if 'start_time' not in st.session_state:
+    st.session_state.start_time = None
 if 'timer' not in st.session_state:
-    st.session_state.timer = 300  # default 5 mins
+    st.session_state.timer = 300  # 5 mins
 
 # --- Helper Functions ---
 MAX_TOKENS = 1024
@@ -160,8 +157,8 @@ def update_leaderboard(student_name, points):
 st.title("Adaptive Translation Tool – Gamified Student Platform 🎮")
 
 student_name = st.text_input("Enter your name")
-
 exercise_mode = st.checkbox("Exercise Mode", value=True)
+
 if exercise_mode:
     exercises = [
         {"source":"With love's light wings did I o'erperch these walls; For stony limits cannot hold love out…",
@@ -177,18 +174,18 @@ else:
 
 translation_text = st.text_area("Your Translation", "")
 
-# Timer challenge
+# Timer display (non-blocking)
 if st.button("Start Timer Challenge"):
-    st.session_state.timer_active = True
-    st.session_state.timer = 300  # 5 minutes
-    start_time = time.time()
-    while st.session_state.timer > 0:
-        st.session_state.timer = 300 - int(time.time() - start_time)
-        mins, secs = divmod(st.session_state.timer, 60)
-        st.write(f"Time left: {mins:02d}:{secs:02d}")
-        st.progress((300 - st.session_state.timer)/300)
-    st.warning("Time's up! Submit your translation now.")
-    st.session_state.timer_active = False
+    st.session_state.start_time = time.time()
+    st.session_state.timer = 300
+    st.success("Timer started: 5 minutes!")
+
+if st.session_state.start_time:
+    elapsed = int(time.time() - st.session_state.start_time)
+    remaining = max(0, st.session_state.timer - elapsed)
+    mins, secs = divmod(remaining, 60)
+    st.info(f"Time left: {mins:02d}:{secs:02d}")
+    st.progress((300 - remaining)/300)
 
 if st.button("Evaluate Translation") and student_name.strip():
     if not source_text.strip() or not translation_text.strip():
