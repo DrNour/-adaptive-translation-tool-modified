@@ -6,10 +6,11 @@ import time
 # =========================
 # Hugging Face API Setup
 # =========================
+HF_TOKEN = "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"  # your token
+headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+
 API_URL_NLI = "https://api-inference.huggingface.co/models/microsoft/deberta-base-mnli"
 API_URL_SIM = "https://api-inference.huggingface.co/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-
-headers = {"Authorization": f"Bearer {st.secrets['HF_TOKEN']}"}
 
 def query(payload, api_url):
     response = requests.post(api_url, headers=headers, json=payload)
