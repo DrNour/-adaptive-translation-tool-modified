@@ -1,4 +1,1 @@
-streamlit==1.25.0
-sacrebleu
-pandas
-matplotlib
+streamlit==1.28.0
