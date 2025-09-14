@@ -1,2 +1,5 @@
-streamlit
-requests
+sacrebleu
+python-Levenshtein
+pandas
+matplotlib
+seaborn
