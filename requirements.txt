@@ -1,1 +1,6 @@
-streamlit==1.28.0
+streamlit
+sacrebleu
+python-Levenshtein
+pandas
+matplotlib
+seaborn
