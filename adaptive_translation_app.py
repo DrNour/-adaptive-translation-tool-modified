@@ -17,8 +17,11 @@ LEADERBOARD_FILE = "leaderboard.csv"
 # --- Load Models ---
 @st.cache_resource
 def load_models():
-    nli_model = pipeline("text-classification", model="valhalla/distilbart-mnli-12-3")
-    sts_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    # Cross-lingual NLI (English ↔ Arabic)
+    nli_model = pipeline("text-classification", model="joeddav/xlm-roberta-large-xnli")
+    # Multilingual sentence embeddings for semantic similarity
+    sts_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+    # Keyword extraction
     kw_model = KeyBERT()
     return nli_model, sts_model, kw_model
 
