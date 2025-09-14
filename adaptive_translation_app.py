@@ -1,63 +1,48 @@
 import streamlit as st
-import requests
-import random
+from difflib import SequenceMatcher
+import sacrebleu
+import Levenshtein
 import time
+import random
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from transformers import MarianMTModel, MarianTokenizer
+from collections import Counter
 
 # =========================
-# Hugging Face API Setup
+# App Setup
 # =========================
-HF_TOKEN = "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"  # your token
-headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-
-API_URL_NLI = "https://api-inference.huggingface.co/models/microsoft/deberta-base-mnli"
-API_URL_SIM = "https://api-inference.huggingface.co/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-
-def query(payload, api_url):
-    response = requests.post(api_url, headers=headers, json=payload)
-    return response.json()
+st.set_page_config(page_title="Adaptive Translation Tool", layout="wide")
+st.title("🌍 Adaptive Translation & Post-Editing Tool")
+st.write("English ↔ Arabic translation with MT, post-editing, gamification, and instructor analytics.")
 
 # =========================
-# Evaluation Functions
+# Load MT Model
 # =========================
-def evaluate_translation(source, translation):
-    """Evaluate translation using NLI + semantic similarity"""
-    # NLI Check
-    nli_input = {"inputs": {"premise": source, "hypothesis": translation}}
-    nli_result = query(nli_input, API_URL_NLI)
+@st.cache_resource
+def load_mt_model():
+    model_name = "Helsinki-NLP/opus-mt-en-ar"
+    tokenizer = MarianTokenizer.from_pretrained(model_name)
+    model = MarianMTModel.from_pretrained(model_name)
+    return tokenizer, model
 
-    # Similarity Score
-    sim_input = {"inputs": {"source_sentence": source, "sentences": [translation]}}
-    sim_result = query(sim_input, API_URL_SIM)
+tokenizer, model = load_mt_model()
 
-    similarity = sim_result[0] if isinstance(sim_result, list) else 0.0
-    label = nli_result[0]["label"] if isinstance(nli_result, list) else "UNKNOWN"
-
-    return {
-        "similarity": round(similarity, 3),
-        "nli_label": label,
-        "feedback": generate_feedback(source, translation, similarity, label)
-    }
-
-def generate_feedback(source, translation, similarity, label):
-    """Student-friendly feedback with post-editing suggestions"""
-    feedback = []
-    if label == "CONTRADICTION":
-        feedback.append("⚠️ The meaning contradicts the source. Double-check word choices.")
-    if similarity < 0.6:
-        feedback.append("🔄 Low similarity. Revise structure and preserve key ideas.")
-    if 0.6 <= similarity < 0.85:
-        feedback.append("✨ Good attempt, but polish idiomatic style and cohesion.")
-    if similarity >= 0.85 and label == "ENTAILMENT":
-        feedback.append("✅ Strong translation! Accurate and faithful to the source.")
-    return feedback
+def translate_mt(text):
+    inputs = tokenizer(text, return_tensors="pt", padding=True)
+    outputs = model.generate(**inputs)
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 # =========================
-# Gamification
+# Gamification / Leaderboard
 # =========================
 if "score" not in st.session_state:
     st.session_state.score = 0
 if "leaderboard" not in st.session_state:
     st.session_state.leaderboard = {}
+if "feedback_history" not in st.session_state:
+    st.session_state.feedback_history = []
 
 def update_score(username, points):
     st.session_state.score += points
@@ -66,32 +51,93 @@ def update_score(username, points):
     st.session_state.leaderboard[username] += points
 
 # =========================
-# Streamlit UI
+# User Input
 # =========================
-st.set_page_config(page_title="Adaptive Translation Tool", layout="wide")
-
-st.title("🌍 Adaptive Translation & Post-Editing Tool")
-st.write("Bidirectional English ↔ Arabic translation evaluation with gamification, feedback, and leaderboard.")
-
 username = st.text_input("Enter your name to start:")
 
-tab1, tab2, tab3 = st.tabs(["Translate & Evaluate", "Challenges", "Leaderboard"])
+tab1, tab2, tab3, tab4 = st.tabs(["Translate & Post-Edit", "Challenges", "Leaderboard", "Instructor Dashboard"])
 
+# =========================
+# Error Highlighting Function
+# =========================
+def highlight_diff(student, reference):
+    matcher = SequenceMatcher(None, reference.split(), student.split())
+    highlighted = ""
+    feedback = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        stu_words = " ".join(student.split()[j1:j2])
+        ref_words = " ".join(reference.split()[i1:i2])
+        if tag == "equal":
+            highlighted += f"<span style='color:green'>{stu_words} </span>"
+        elif tag == "replace":
+            highlighted += f"<span style='color:red'>{stu_words} </span>"
+            feedback.append(f"Replace '{stu_words}' with '{ref_words}'")
+        elif tag == "insert":
+            highlighted += f"<span style='color:orange'>{stu_words} </span>"
+            feedback.append(f"Extra words: '{stu_words}'")
+        elif tag == "delete":
+            highlighted += f"<span style='color:blue'>{ref_words} </span>"
+            feedback.append(f"Missing: '{ref_words}'")
+    return highlighted, feedback
+
+# =========================
+# Tab 1: Translate & Post-Edit
+# =========================
 with tab1:
-    st.subheader("🔎 Translate & Get Feedback")
+    st.subheader("🔎 Translate or Post-Edit MT Output")
     source_text = st.text_area("Source Text")
-    translation_text = st.text_area("Your Translation")
-
+    reference_translation = st.text_area("Reference Translation (Human Translation)")
+    
+    if st.button("Generate MT Output"):
+        if source_text:
+            mt_output = translate_mt(source_text)
+            st.session_state.mt_output = mt_output
+            st.success("Machine Translation Generated!")
+    
+    student_translation = st.text_area("Edit MT Output Here", value=st.session_state.get("mt_output", ""), height=150)
+    start_time = time.time()
+    
     if st.button("Evaluate Translation"):
-        if source_text and translation_text:
-            with st.spinner("Evaluating..."):
-                results = evaluate_translation(source_text, translation_text)
-            st.success(f"Similarity Score: {results['similarity']}")
-            st.info(f"NLI Label: {results['nli_label']}")
-            for fb in results["feedback"]:
-                st.warning(fb)
-            update_score(username, int(results["similarity"] * 100))
+        if source_text and student_translation and reference_translation:
+            elapsed_time = time.time() - start_time
+            highlighted, fb = highlight_diff(student_translation, reference_translation)
+            
+            # Display highlighted text
+            st.markdown(highlighted, unsafe_allow_html=True)
+            
+            # Feedback
+            st.subheader("💡 Feedback:")
+            for f in fb:
+                st.warning(f)
+            
+            # Scoring
+            bleu_score = sacrebleu.corpus_bleu([student_translation], [[reference_translation]]).score
+            chrf_score = sacrebleu.corpus_chrf([student_translation], [[reference_translation]]).score
+            ter_score = sacrebleu.corpus_ter([student_translation], [[reference_translation]]).score
+            edit_dist = Levenshtein.distance(student_translation, reference_translation)
+            st.write(f"BLEU: {bleu_score:.2f}, chrF: {chrf_score:.2f}, TER: {ter_score:.2f}, Edit Distance: {edit_dist}")
+            st.write(f"Time Taken: {elapsed_time:.2f} seconds")
+            
+            # Points
+            points = int(chrf_score + bleu_score - edit_dist + max(0, 50 - int(elapsed_time)))
+            update_score(username, points)
+            st.success(f"Points earned: {points}")
+            
+            # Record feedback for instructor
+            st.session_state.feedback_history.append(fb)
+            
+            # Suggested exercises
+            st.subheader("📝 Suggested Exercises:")
+            if any("Replace" in f for f in fb):
+                st.info("Try replacing the highlighted words with more accurate or idiomatic expressions.")
+            if any("Extra words" in f for f in fb):
+                st.info("Remove unnecessary words to make your sentence concise.")
+            if any("Missing" in f for f in fb):
+                st.info("Add the missing words to match the reference meaning.")
 
+# =========================
+# Tab 2: Challenges
+# =========================
 with tab2:
     st.subheader("⏱️ Timer Challenge Mode")
     challenges = [
@@ -99,21 +145,39 @@ with tab2:
         ("Knowledge is power.", "المعرفة قوة."),
         ("The weather is nice today.", "الطقس جميل اليوم.")
     ]
+    
     if st.button("Start Challenge"):
         challenge = random.choice(challenges)
+        st.session_state.challenge = challenge
         st.write(f"Translate this: **{challenge[0]}**")
-        start_time = time.time()
-        user_ans = st.text_area("Your Translation (Challenge Mode)")
+    
+    if "challenge" in st.session_state:
+        user_ans = st.text_area("Your Translation (Challenge Mode)", key="challenge_box")
         if st.button("Submit Challenge"):
             elapsed = time.time() - start_time
-            results = evaluate_translation(challenge[0], user_ans)
-            st.write(f"⏳ Time Taken: {elapsed:.2f} sec")
-            st.write(f"Similarity: {results['similarity']}")
-            for fb in results["feedback"]:
-                st.warning(fb)
-            bonus = max(0, 50 - int(elapsed))
-            update_score(username, int(results["similarity"] * 100) + bonus)
+            highlighted, fb = highlight_diff(user_ans, st.session_state.challenge[1])
+            st.markdown(highlighted, unsafe_allow_html=True)
+            
+            chrf_score = sacrebleu.corpus_chrf([user_ans], [[st.session_state.challenge[1]]]).score
+            edit_dist = Levenshtein.distance(user_ans, st.session_state.challenge[1])
+            st.write(f"chrF Score: {chrf_score:.2f}, Edit Distance: {edit_dist}")
+            st.write(f"Time Taken: {elapsed:.2f} sec")
+            
+            points = int(chrf_score - edit_dist + max(0, 50 - int(elapsed)))
+            update_score(username, points)
+            st.success(f"Points earned: {points}")
+            
+            st.subheader("📝 Suggested Exercises:")
+            if any("Replace" in f for f in fb):
+                st.info("Replace highlighted words for accuracy/idiomatic usage.")
+            if any("Extra words" in f for f in fb):
+                st.info("Remove unnecessary words for conciseness.")
+            if any("Missing" in f for f in fb):
+                st.info("Add missing words to preserve meaning.")
 
+# =========================
+# Tab 3: Leaderboard
+# =========================
 with tab3:
     st.subheader("🏆 Leaderboard")
     if st.session_state.leaderboard:
@@ -122,3 +186,33 @@ with tab3:
             st.write(f"{rank}. **{user}** - {points} points")
     else:
         st.info("No scores yet. Start translating to enter the leaderboard!")
+
+# =========================
+# Tab 4: Instructor Dashboard
+# =========================
+with tab4:
+    st.subheader("📊 Instructor Dashboard")
+    
+    if st.session_state.leaderboard:
+        df = pd.DataFrame([
+            {"Student": user, "Points": points} 
+            for user, points in st.session_state.leaderboard.items()
+        ])
+        st.dataframe(df)
+        st.bar_chart(df.set_index("Student")["Points"])
+        
+        # Error Analysis
+        feedback_list = st.session_state.feedback_history
+        all_errors = [f for sublist in feedback_list for f in sublist]
+        if all_errors:
+            counter = Counter(all_errors)
+            error_df = pd.DataFrame(counter.items(), columns=["Error", "Count"]).sort_values(by="Count", ascending=False)
+            st.subheader("Common Errors Across Class")
+            st.table(error_df.head(10))
+            
+            # Heatmap
+            plt.figure(figsize=(10,6))
+            sns.barplot(data=error_df.head(10), x="Count", y="Error")
+            st.pyplot(plt)
+    else:
+        st.info("No student activity yet. Have students complete exercises first.")
