@@ -1,16 +1,16 @@
 import streamlit as st
 from difflib import SequenceMatcher
 
+st.title("Adaptive Translation Tool – Safe Minimal Version")
+
 # Session state
 if "score" not in st.session_state:
     st.session_state.score = 0
 if "leaderboard" not in st.session_state:
     st.session_state.leaderboard = {}
 
-st.title("Adaptive Translation Tool – Minimal Safe Version")
-
+# User input
 username = st.text_input("Enter your name:")
-
 source_text = st.text_area("Source Text")
 reference_translation = st.text_area("Reference Translation")
 student_translation = st.text_area("Your Translation")
@@ -27,7 +27,7 @@ if st.button("Evaluate Translation"):
     elif not student_translation.strip() or not reference_translation.strip():
         st.warning("Please provide both your translation and reference translation.")
     else:
-        # Edit distance
+        # Calculate edit distance
         dist = edit_distance(student_translation, reference_translation)
         st.write(f"Edit Distance: {dist}")
 
