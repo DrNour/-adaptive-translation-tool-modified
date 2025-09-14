@@ -2,11 +2,20 @@ import streamlit as st
 from difflib import SequenceMatcher
 import time
 import random
-import sacrebleu
-import Levenshtein
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+
+# Optional: sacrebleu (if available)
+try:
+    import sacrebleu
+    sacrebleu_available = True
+except ModuleNotFoundError:
+    sacrebleu_available = False
+
+# Optional: pandas for instructor dashboard
+try:
+    import pandas as pd
+    pd_available = True
+except ModuleNotFoundError:
+    pd_available = False
 
 # =========================
 # App Setup
@@ -15,7 +24,7 @@ st.set_page_config(page_title="Adaptive Translation Tool", layout="wide")
 st.title("🌍 Adaptive Translation & Post-Editing Tool")
 
 # =========================
-# Gamification / Leaderboard
+# Session State / Gamification
 # =========================
 if "score" not in st.session_state:
     st.session_state.score = 0
@@ -31,7 +40,7 @@ def update_score(username, points):
     st.session_state.leaderboard[username] += points
 
 # =========================
-# Error Highlighting Function
+# Highlight Differences
 # =========================
 def highlight_diff(student, reference):
     matcher = SequenceMatcher(None, reference.split(), student.split())
@@ -73,25 +82,26 @@ with tab1:
     if st.button("Evaluate Translation"):
         highlighted, fb = highlight_diff(student_translation, reference_translation)
         st.markdown(highlighted, unsafe_allow_html=True)
-        
+
         st.subheader("💡 Feedback:")
         for f in fb:
             st.warning(f)
 
-        # Scores
-        bleu_score = sacrebleu.corpus_bleu([student_translation], [[reference_translation]]).score
-        chrf_score = sacrebleu.corpus_chrf([student_translation], [[reference_translation]]).score
-        ter_score = sacrebleu.corpus_ter([student_translation], [[reference_translation]]).score
-        st.write(f"BLEU: {bleu_score:.2f}, chrF: {chrf_score:.2f}, TER: {ter_score:.2f}")
+        # Simple similarity score
+        sim_score = SequenceMatcher(None, reference_translation, student_translation).ratio() * 100
+        st.write(f"Similarity Score: {sim_score:.2f}%")
 
-        edit_dist = Levenshtein.distance(student_translation, reference_translation)
-        st.write(f"Edit Distance: {edit_dist}")
+        # Optional: sacrebleu
+        if sacrebleu_available:
+            bleu = sacrebleu.corpus_bleu([student_translation], [[reference_translation]]).score
+            chrf = sacrebleu.corpus_chrf([student_translation], [[reference_translation]]).score
+            st.write(f"BLEU: {bleu:.2f}, chrF: {chrf:.2f}")
 
         elapsed_time = time.time() - start_time
         st.write(f"Time Taken: {elapsed_time:.2f} seconds")
 
         # Points
-        points = 10 + int(random.random()*10)  # simplified points system
+        points = 10 + int(random.random()*10)
         update_score(username, points)
         st.success(f"Points earned: {points}")
 
@@ -118,11 +128,9 @@ with tab2:
         if st.button("Submit Challenge"):
             highlighted, fb = highlight_diff(user_ans, st.session_state.challenge[1])
             st.markdown(highlighted, unsafe_allow_html=True)
-            
             st.subheader("Feedback:")
             for f in fb:
                 st.warning(f)
-            
             points = 10 + int(random.random()*10)
             update_score(username, points)
             st.success(f"Points earned: {points}")
@@ -144,10 +152,9 @@ with tab3:
 # =========================
 with tab4:
     st.subheader("📊 Instructor Dashboard")
-    if st.session_state.leaderboard:
+    if pd_available and st.session_state.leaderboard:
         df = pd.DataFrame([{"Student": user, "Points": points} for user, points in st.session_state.leaderboard.items()])
         st.dataframe(df)
-        st.bar_chart(df.set_index("Student")["Points"])
         
         feedback_list = st.session_state.feedback_history
         all_errors = [f for sublist in feedback_list for f in sublist]
@@ -156,9 +163,5 @@ with tab4:
             error_df = pd.DataFrame(counter.items(), columns=["Error", "Count"]).sort_values(by="Count", ascending=False)
             st.subheader("Common Errors Across Class")
             st.table(error_df.head(10))
-            
-            plt.figure(figsize=(10,6))
-            sns.barplot(data=error_df.head(10), x="Count", y="Error")
-            st.pyplot(plt)
     else:
         st.info("Instructor dashboard charts unavailable or no student activity.")
