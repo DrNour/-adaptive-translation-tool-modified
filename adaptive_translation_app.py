@@ -3,25 +3,11 @@ from difflib import SequenceMatcher
 import time
 import random
 
-# Optional: sacrebleu (if available)
-try:
-    import sacrebleu
-    sacrebleu_available = True
-except ModuleNotFoundError:
-    sacrebleu_available = False
-
-# Optional: pandas for instructor dashboard
-try:
-    import pandas as pd
-    pd_available = True
-except ModuleNotFoundError:
-    pd_available = False
-
 # =========================
 # App Setup
 # =========================
 st.set_page_config(page_title="Adaptive Translation Tool", layout="wide")
-st.title("🌍 Adaptive Translation & Post-Editing Tool")
+st.title("🌍 Adaptive Translation & Post-Editing Tool (Free-Tier Stable)")
 
 # =========================
 # Session State / Gamification
@@ -67,15 +53,15 @@ def highlight_diff(student, reference):
 # =========================
 username = st.text_input("Enter your name:")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Translate & Post-Edit", "Challenges", "Leaderboard", "Instructor Dashboard"])
+tab1, tab2, tab3 = st.tabs(["Translate & Post-Edit", "Challenges", "Leaderboard"])
 
 # =========================
 # Tab 1: Translate & Post-Edit
 # =========================
 with tab1:
-    st.subheader("🔎 Translate or Post-Edit MT Output")
+    st.subheader("🔎 Translate or Post-Edit")
     source_text = st.text_area("Source Text")
-    reference_translation = st.text_area("Reference Translation (Human Translation)")
+    reference_translation = st.text_area("Reference Translation (Human)")
     student_translation = st.text_area("Your Translation", height=150)
 
     start_time = time.time()
@@ -87,25 +73,20 @@ with tab1:
         for f in fb:
             st.warning(f)
 
-        # Simple similarity score
         sim_score = SequenceMatcher(None, reference_translation, student_translation).ratio() * 100
         st.write(f"Similarity Score: {sim_score:.2f}%")
-
-        # Optional: sacrebleu
-        if sacrebleu_available:
-            bleu = sacrebleu.corpus_bleu([student_translation], [[reference_translation]]).score
-            chrf = sacrebleu.corpus_chrf([student_translation], [[reference_translation]]).score
-            st.write(f"BLEU: {bleu:.2f}, chrF: {chrf:.2f}")
 
         elapsed_time = time.time() - start_time
         st.write(f"Time Taken: {elapsed_time:.2f} seconds")
 
-        # Points
         points = 10 + int(random.random()*10)
         update_score(username, points)
         st.success(f"Points earned: {points}")
 
+        # Store last 5 feedback entries only to save memory
         st.session_state.feedback_history.append(fb)
+        if len(st.session_state.feedback_history) > 5:
+            st.session_state.feedback_history = st.session_state.feedback_history[-5:]
 
 # =========================
 # Tab 2: Challenges
@@ -146,22 +127,3 @@ with tab3:
             st.write(f"{rank}. **{user}** - {points} points")
     else:
         st.info("No scores yet. Start translating!")
-
-# =========================
-# Tab 4: Instructor Dashboard
-# =========================
-with tab4:
-    st.subheader("📊 Instructor Dashboard")
-    if pd_available and st.session_state.leaderboard:
-        df = pd.DataFrame([{"Student": user, "Points": points} for user, points in st.session_state.leaderboard.items()])
-        st.dataframe(df)
-        
-        feedback_list = st.session_state.feedback_history
-        all_errors = [f for sublist in feedback_list for f in sublist]
-        if all_errors:
-            counter = {k: all_errors.count(k) for k in set(all_errors)}
-            error_df = pd.DataFrame(counter.items(), columns=["Error", "Count"]).sort_values(by="Count", ascending=False)
-            st.subheader("Common Errors Across Class")
-            st.table(error_df.head(10))
-    else:
-        st.info("Instructor dashboard charts unavailable or no student activity.")
