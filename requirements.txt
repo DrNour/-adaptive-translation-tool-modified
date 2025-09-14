@@ -1,7 +1,2 @@
 streamlit
-transformers
-sentence-transformers
-keybert
-torch
-numpy
-pandas
+requests
