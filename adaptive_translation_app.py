@@ -13,13 +13,6 @@ except ModuleNotFoundError:
     st.warning("sacrebleu not installed: BLEU/chrF/TER scoring disabled.")
 
 try:
-    import Levenshtein
-    levenshtein_available = True
-except ModuleNotFoundError:
-    levenshtein_available = False
-    st.warning("python-Levenshtein not installed: Edit distance disabled.")
-
-try:
     import pandas as pd
     import matplotlib.pyplot as plt
     import seaborn as sns
@@ -103,6 +96,14 @@ def highlight_diff(student, reference):
     return highlighted, feedback
 
 # =========================
+# Edit Distance (difflib)
+# =========================
+def edit_distance(a, b):
+    matcher = SequenceMatcher(None, a, b)
+    ratio = matcher.ratio()  # Similarity ratio 0-1
+    return int((1 - ratio) * max(len(a), len(b)))
+
+# =========================
 # Semantic Accuracy
 # =========================
 def semantic_score(source, translation):
@@ -168,9 +169,8 @@ with tab1:
             ter_score = sacrebleu.corpus_ter([student_translation], [[reference_translation]]).score
             st.write(f"BLEU: {bleu_score:.2f}, chrF: {chrf_score:.2f}, TER: {ter_score:.2f}")
 
-        if levenshtein_available:
-            edit_dist = Levenshtein.distance(student_translation, reference_translation)
-            st.write(f"Edit Distance: {edit_dist}")
+        dist = edit_distance(student_translation, reference_translation)
+        st.write(f"Edit Distance (approx.): {dist}")
 
         # Semantic & Fluency
         if semantic_fluency_available:
@@ -190,14 +190,16 @@ with tab1:
         # Store feedback
         st.session_state.feedback_history.append((username, [{"semantic": sem_score, "fluency": flu_score}]))
 
-
 # =========================
 # Tab 3: Leaderboard
 # =========================
 with tab3:
     st.subheader("🏆 Leaderboard")
-    leaderboard_df = pd.DataFrame(list(st.session_state.leaderboard.items()), columns=["Student", "Points"])
-    st.dataframe(leaderboard_df.sort_values(by="Points", ascending=False))
+    if pd_available:
+        leaderboard_df = pd.DataFrame(list(st.session_state.leaderboard.items()), columns=["Student", "Points"])
+        st.dataframe(leaderboard_df.sort_values(by="Points", ascending=False))
+    else:
+        st.write(st.session_state.leaderboard)
 
 # =========================
 # Tab 4: Instructor Dashboard
