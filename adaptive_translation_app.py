@@ -1,7 +1,8 @@
 import streamlit as st
 from difflib import SequenceMatcher
-import time
-import random
+import time, random
+from langdetect import detect
+import torch
 
 # Optional packages
 try:
@@ -9,14 +10,14 @@ try:
     sacrebleu_available = True
 except ModuleNotFoundError:
     sacrebleu_available = False
-    st.warning("sacrebleu not installed: BLEU/chrF/TER scoring will be disabled.")
+    st.warning("sacrebleu not installed: BLEU/chrF/TER scoring disabled.")
 
 try:
     import Levenshtein
     levenshtein_available = True
 except ModuleNotFoundError:
     levenshtein_available = False
-    st.warning("python-Levenshtein not installed: edit distance scoring will be disabled.")
+    st.warning("python-Levenshtein not installed: Edit distance disabled.")
 
 try:
     import pandas as pd
@@ -25,10 +26,26 @@ try:
     pd_available = True
 except ModuleNotFoundError:
     pd_available = False
-    st.warning("pandas/seaborn/matplotlib not installed: Instructor dashboard charts disabled.")
+    st.warning("pandas/seaborn/matplotlib not installed: Dashboard charts disabled.")
+
+# Transformers for semantic and fluency
+try:
+    from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+    # Cross-lingual NLI
+    nli_model = pipeline("text-classification", model="joeddav/xlm-roberta-large-xnli")
+    # English fluency
+    en_tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    en_model = AutoModelForCausalLM.from_pretrained("gpt2")
+    # Arabic fluency
+    ar_tokenizer = AutoTokenizer.from_pretrained("aubmindlab/ara-gpt2")
+    ar_model = AutoModelForCausalLM.from_pretrained("aubmindlab/ara-gpt2")
+    semantic_fluency_available = True
+except:
+    semantic_fluency_available = False
+    st.warning("Semantic accuracy / fluency scoring unavailable (transformers missing).")
 
 # =========================
-# App Setup
+# Streamlit Setup
 # =========================
 st.set_page_config(page_title="Adaptive Translation Tool", layout="wide")
 st.title("🌍 Adaptive Translation & Post-Editing Tool")
@@ -50,7 +67,20 @@ def update_score(username, points):
     st.session_state.leaderboard[username] += points
 
 # =========================
-# Error Highlighting Function
+# Language Detection
+# =========================
+def detect_language(text):
+    try:
+        lang = detect(text)
+        if lang.startswith("ar"):
+            return "arabic"
+        else:
+            return "english"
+    except:
+        return "unknown"
+
+# =========================
+# Error Highlighting
 # =========================
 def highlight_diff(student, reference):
     matcher = SequenceMatcher(None, reference.split(), student.split())
@@ -71,6 +101,40 @@ def highlight_diff(student, reference):
             highlighted += f"<span style='color:blue'>{ref_words} </span>"
             feedback.append(f"Missing: '{ref_words}'")
     return highlighted, feedback
+
+# =========================
+# Semantic Accuracy
+# =========================
+def semantic_score(source, translation):
+    if not semantic_fluency_available:
+        return None
+    result = nli_model(f"{source} </s></s> {translation}")[0]
+    if result['label'] == 'ENTAILMENT':
+        score = result['score'] * 100
+    elif result['label'] == 'CONTRADICTION':
+        score = 0
+    else:
+        score = result['score'] * 50
+    return score
+
+# =========================
+# Fluency Scoring
+# =========================
+def fluency_score(text):
+    if not semantic_fluency_available:
+        return None
+    lang = detect_language(text)
+    if lang == "english":
+        tokenizer, model = en_tokenizer, en_model
+    elif lang == "arabic":
+        tokenizer, model = ar_tokenizer, ar_model
+    else:
+        return None
+    inputs = tokenizer(text, return_tensors="pt")
+    with torch.no_grad():
+        loss = model(**inputs, labels=inputs["input_ids"]).loss
+    score = 100 / (1 + loss.item())
+    return score
 
 # =========================
 # Tabs
@@ -103,90 +167,65 @@ with tab1:
             chrf_score = sacrebleu.corpus_chrf([student_translation], [[reference_translation]]).score
             ter_score = sacrebleu.corpus_ter([student_translation], [[reference_translation]]).score
             st.write(f"BLEU: {bleu_score:.2f}, chrF: {chrf_score:.2f}, TER: {ter_score:.2f}")
-        else:
-            st.info("BLEU/chrF/TER scores disabled (sacrebleu not installed).")
 
         if levenshtein_available:
             edit_dist = Levenshtein.distance(student_translation, reference_translation)
             st.write(f"Edit Distance: {edit_dist}")
-        else:
-            st.info("Edit Distance disabled (python-Levenshtein not installed).")
+
+        # Semantic & Fluency
+        if semantic_fluency_available:
+            sem_score = semantic_score(source_text, student_translation)
+            flu_score = fluency_score(student_translation)
+            st.write(f"Semantic Accuracy: {sem_score:.2f}")
+            st.write(f"Fluency: {flu_score:.2f}")
 
         elapsed_time = time.time() - start_time
         st.write(f"Time Taken: {elapsed_time:.2f} seconds")
 
-        # Points
-        points = 10 + int(random.random()*10)  # simplified points system
+        # Gamification points
+        points = 10 + int(random.random()*10)
         update_score(username, points)
         st.success(f"Points earned: {points}")
 
-        st.session_state.feedback_history.append(fb)
+        # Store feedback
+        st.session_state.feedback_history.append((username, [{"semantic": sem_score, "fluency": flu_score}]))
 
-# =========================
-# Tab 2: Challenges
-# =========================
-with tab2:
-    st.subheader("⏱️ Timer Challenge Mode")
-    challenges = [
-        ("I love you.", "أنا أحبك."),
-        ("Knowledge is power.", "المعرفة قوة."),
-        ("The weather is nice today.", "الطقس جميل اليوم.")
-    ]
-    
-    if st.button("Start Challenge"):
-        challenge = random.choice(challenges)
-        st.session_state.challenge = challenge
-        st.write(f"Translate: **{challenge[0]}**")
-    
-    if "challenge" in st.session_state:
-        user_ans = st.text_area("Your Translation (Challenge Mode)", key="challenge_box")
-        if st.button("Submit Challenge"):
-            highlighted, fb = highlight_diff(user_ans, st.session_state.challenge[1])
-            st.markdown(highlighted, unsafe_allow_html=True)
-            
-            st.subheader("Feedback:")
-            for f in fb:
-                st.warning(f)
-            
-            points = 10 + int(random.random()*10)
-            update_score(username, points)
-            st.success(f"Points earned: {points}")
 
 # =========================
 # Tab 3: Leaderboard
 # =========================
 with tab3:
     st.subheader("🏆 Leaderboard")
-    if st.session_state.leaderboard:
-        sorted_lb = sorted(st.session_state.leaderboard.items(), key=lambda x: x[1], reverse=True)
-        for rank, (user, points) in enumerate(sorted_lb, start=1):
-            st.write(f"{rank}. **{user}** - {points} points")
-    else:
-        st.info("No scores yet. Start translating!")
+    leaderboard_df = pd.DataFrame(list(st.session_state.leaderboard.items()), columns=["Student", "Points"])
+    st.dataframe(leaderboard_df.sort_values(by="Points", ascending=False))
 
 # =========================
 # Tab 4: Instructor Dashboard
 # =========================
 with tab4:
     st.subheader("📊 Instructor Dashboard")
-    if pd_available and st.session_state.leaderboard:
-        df = pd.DataFrame([
-            {"Student": user, "Points": points} 
-            for user, points in st.session_state.leaderboard.items()
-        ])
-        st.dataframe(df)
-        st.bar_chart(df.set_index("Student")["Points"])
-        
-        feedback_list = st.session_state.feedback_history
-        all_errors = [f for sublist in feedback_list for f in sublist]
-        if all_errors:
-            counter = {k: all_errors.count(k) for k in set(all_errors)}
-            error_df = pd.DataFrame(counter.items(), columns=["Error", "Count"]).sort_values(by="Count", ascending=False)
-            st.subheader("Common Errors Across Class")
-            st.table(error_df.head(10))
-            
-            plt.figure(figsize=(10,6))
-            sns.barplot(data=error_df.head(10), x="Count", y="Error")
-            st.pyplot(plt)
+    if not pd_available or len(st.session_state.feedback_history) == 0:
+        st.info("Dashboard unavailable or no data yet.")
     else:
-        st.info("Instructor dashboard charts unavailable (pandas/seaborn not installed) or no student activity.")
+        records = []
+        for student, fb_list in st.session_state.feedback_history:
+            for fb in fb_list:
+                records.append({
+                    "Student": student,
+                    "Semantic Accuracy": fb.get("semantic", 0),
+                    "Fluency": fb.get("fluency", 0)
+                })
+        df = pd.DataFrame(records)
+        avg_student = df.groupby("Student").mean().reset_index()
+        st.write("Average Semantic Accuracy & Fluency per Student:")
+        st.dataframe(avg_student)
+        class_avg = df[["Semantic Accuracy", "Fluency"]].mean()
+        st.write(f"Class Average Semantic Accuracy: {class_avg['Semantic Accuracy']:.2f}")
+        st.write(f"Class Average Fluency: {class_avg['Fluency']:.2f}")
+        fig, ax = plt.subplots(1, 2, figsize=(12,5))
+        sns.barplot(x="Student", y="Semantic Accuracy", data=avg_student, ax=ax[0])
+        ax[0].set_title("Semantic Accuracy per Student")
+        sns.barplot(x="Student", y="Fluency", data=avg_student, ax=ax[1])
+        ax[1].set_title("Fluency per Student")
+        plt.tight_layout()
+        st.pyplot(fig)
